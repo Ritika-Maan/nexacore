@@ -9,3 +9,5 @@ __pycache__/
 backend/memory/.hindsight_store.json
 reminder_log.json
 ticket_log.json
+logs/
+.pytest_cache/
