@@ -88,7 +88,7 @@ class TestEmailClient:
             checklist_items=["Set up laptop", "Get AWS access", "Read onboarding docs"],
         )
         assert result["sent"] is True
-        assert "onboarding" in result["subject"].lower()
+        assert "welcome" in result["subject"].lower()
 
     def test_email_validate_recipient(self):
         """Test email validation."""

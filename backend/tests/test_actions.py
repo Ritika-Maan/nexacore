@@ -20,14 +20,15 @@ def test_db():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
 
-    # Reset singleton
+    original_instance = AppDatabase._instance
     AppDatabase._instance = None
 
     db = AppDatabase(db_path)
+    AppDatabase._instance = db
     yield db
 
-    # Cleanup
     Path(db_path).unlink(missing_ok=True)
+    AppDatabase._instance = original_instance
 
 
 class TestRaiseTicketAction:

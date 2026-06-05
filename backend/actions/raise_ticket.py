@@ -80,7 +80,7 @@ def raise_ticket(
         f"Assigned to: {assignee_team}\n"
         f"Priority: {priority}"
     )
-    print(f"[ACTION: raise_ticket] {ticket_id} — {title}")
+    print(f"[ACTION: raise_ticket] {ticket_key} — {title}")
     return confirmation
 
 

@@ -34,7 +34,7 @@ class AppDatabase:
     _instance: "AppDatabase | None" = None
     _instance_lock = Lock()
 
-    def __new__(cls) -> "AppDatabase":
+    def __new__(cls, db_path: str | Path | None = None) -> "AppDatabase":
         """Factory: Return PostgreSQL or SQLite instance based on DATABASE_URL."""
         if os.getenv("DATABASE_URL"):
             # Use PostgreSQL backend

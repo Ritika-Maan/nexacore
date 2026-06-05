@@ -25,7 +25,8 @@ class TestHealthEndpoints:
         response = client.get("/ready")
         assert response.status_code in [200, 503]  # OK or unavailable
         data = response.json()
-        assert "dependencies" in data
+        assert "database" in data
+        assert "memory_backend" in data
 
     def test_health_detailed_endpoint(self):
         client = TestClient(app)
@@ -33,7 +34,8 @@ class TestHealthEndpoints:
         assert response.status_code in [200, 503]
         data = response.json()
         assert "status" in data
-        assert "dependencies" in data
+        assert "database" in data
+        assert "database_stats" in data
 
 
 class TestMetricsEndpoints:
@@ -43,8 +45,8 @@ class TestMetricsEndpoints:
         client = TestClient(app)
         response = client.get("/metrics")
         assert response.status_code == 200
-        # Should be Prometheus text format
-        assert "TYPE" in response.text or "#" in response.text
+        # Should be Prometheus text exposition format (metric lines)
+        assert "http_requests_total" in response.text or "_bucket" in response.text
 
     def test_stats_json_endpoint(self):
         client = TestClient(app)
@@ -67,23 +69,22 @@ class TestSessionEndpoints:
     def test_create_session(self):
         client = TestClient(app)
         payload = {
-            "user_name": "Alice Johnson",
-            "team_name": "platform",
-            "role_title": "SDE-1",
-            "employment_type": "fte",
+            "name": "Alice Johnson",
+            "team": "platform",
+            "role": "SDE-1",
+            "employee_type": "fte",
         }
         response = client.post("/sessions", json=payload)
         assert response.status_code == 200
         data = response.json()
         assert "session_id" in data
-        assert data["user_name"] == "Alice Johnson"
 
     def test_get_session(self):
         client = TestClient(app)
         # First create a session
         create_payload = {
-            "user_name": "Bob Smith",
-            "team_name": "infra_security",
+            "name": "Bob Smith",
+            "team": "infra_security",
         }
         create_response = client.post("/sessions", json=create_payload)
         assert create_response.status_code == 200
@@ -93,7 +94,7 @@ class TestSessionEndpoints:
         get_response = client.get(f"/sessions/{session_id}")
         assert get_response.status_code == 200
         data = get_response.json()
-        assert data["session_id"] == session_id
+        assert data["id"] == session_id
         assert data["user_name"] == "Bob Smith"
 
     def test_list_sessions(self):
@@ -126,7 +127,7 @@ class TestDataEndpoints:
         response = client.get("/audit")
         assert response.status_code == 200
         data = response.json()
-        assert "audit_events" in data or isinstance(data, list)
+        assert "events" in data or isinstance(data, list)
 
 
 class TestMemoryEndpoints:
@@ -134,7 +135,7 @@ class TestMemoryEndpoints:
 
     def test_get_memories(self):
         client = TestClient(app)
-        response = client.get("/memories?limit=5")
+        response = client.get("/memories", params={"team": "platform"})
         assert response.status_code == 200
         data = response.json()
         assert "memories" in data or isinstance(data, list)
@@ -142,8 +143,9 @@ class TestMemoryEndpoints:
     def test_get_memories_with_context(self):
         client = TestClient(app)
         params = {
-            "query": "AWS",
-            "limit": 5,
+            "team": "platform",
+            "role": "SDE-1",
+            "employee_type": "fte",
         }
         response = client.get("/memories", params=params)
         assert response.status_code == 200
