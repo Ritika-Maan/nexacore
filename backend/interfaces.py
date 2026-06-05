@@ -1,9 +1,11 @@
 """
-interfaces.py
-─────────────
-Shared data contracts between all modules.
-Person 1 owns this file. All teammates import from here — never the reverse.
-This is the single source of truth for inter-module types.
+interfaces.py — Shared contracts for the Ramp project.
+P1 owns this file. Everyone imports from here.
+Do NOT import from individual modules directly across boundaries.
+
+Merge note: upstream used dataclasses; P1 uses Pydantic for FastAPI compatibility.
+All field names match the upstream dataclass definitions exactly so every
+teammate's code continues to work without changes.
 """
 
 from typing import Any, Optional
@@ -11,82 +13,92 @@ from pydantic import BaseModel, Field
 
 
 # ─────────────────────────────────────────────
-# Inbound request from frontend / API
+# UserProfile
+# Matches upstream: name, team_name, employment_type, role_title, manager_name
+# ─────────────────────────────────────────────
+
+class UserProfile(BaseModel):
+    """Represents the incoming user at start of onboarding session."""
+    name: str
+    team_name: str                          # e.g. "Infra Security" or "infra_security"
+    employment_type: str = "fte"            # "fte" | "contractor" | "intern"
+    role_title: Optional[str] = None        # e.g. "Software Engineer"
+    manager_name: Optional[str] = None
+
+
+# ─────────────────────────────────────────────
+# TeamPath
+# Matches upstream: ids, names
+# ─────────────────────────────────────────────
+
+class TeamPath(BaseModel):
+    """
+    Result of team_resolver — the full ancestry from company → leaf team.
+    Example:
+        ids   = ["company", "engineering", "platform", "infra_security"]
+        names = ["AcmeCorp", "Engineering Org", "Platform Engineering", "Infra Security"]
+    """
+    ids: list[str] = Field(default_factory=list)
+    names: list[str] = Field(default_factory=list)
+
+    def __str__(self) -> str:
+        return " → ".join(self.names)
+
+
+# ─────────────────────────────────────────────
+# MemoryItem
+# Matches upstream: content, tags, level, source, relevance_score
+# ─────────────────────────────────────────────
+
+class MemoryItem(BaseModel):
+    """One retrieved memory from Hindsight. P2 writes this shape; everyone reads it."""
+    content: str
+    tags: list[str] = Field(default_factory=list)
+    level: str = ""           # "company" | "division" | "team" | "sub_team" | "exception"
+    source: str = ""          # "seed_data" | "interaction" | "ingestion"
+    relevance_score: float = 0.0
+
+
+# ─────────────────────────────────────────────
+# ContextBlock
+# Matches upstream: user, team_path, memories, exception_notes, raw_accesses
+# ─────────────────────────────────────────────
+
+class ContextBlock(BaseModel):
+    """
+    Assembled context object handed to P1's prompt_builder.
+    Contains everything the LLM needs to know before responding.
+    P3 (context_builder) fills this; P1 (agent) consumes it.
+    """
+    user: UserProfile
+    team_path: TeamPath
+    memories: list[MemoryItem] = Field(default_factory=list)
+    exception_notes: list[str] = Field(default_factory=list)
+    raw_accesses: list[str] = Field(default_factory=list)   # merged access list, all levels
+
+
+# ─────────────────────────────────────────────
+# AgentResponse
+# Matches upstream: message, memories_used, new_memories_written, suggested_actions
+# ─────────────────────────────────────────────
+
+class AgentResponse(BaseModel):
+    """What the agent returns after processing a user message."""
+    message: str
+    memories_used: list[MemoryItem] = Field(default_factory=list)
+    new_memories_written: list[MemoryItem] = Field(default_factory=list)
+    suggested_actions: list[str] = Field(default_factory=list)
+
+
+# ─────────────────────────────────────────────
+# OnboardingRequest — FastAPI inbound request schema (P1 + P5)
 # ─────────────────────────────────────────────
 
 class OnboardingRequest(BaseModel):
     """What the frontend sends to POST /chat."""
-    name: str = Field(..., description="Employee's full name")
-    team: str = Field(..., description="Team name, e.g. 'Platform Team'")
-    role: str = Field(..., description="Job role, e.g. 'Backend Engineer'")
-    employee_type: str = Field(
-        default="full-time",
-        description="Employment type: full-time | contractor | intern",
-    )
-    query: str = Field(..., description="The employee's onboarding question")
-    session_id: Optional[str] = Field(
-        default=None,
-        description="Optional session ID for multi-turn conversations",
-    )
-
-
-# ─────────────────────────────────────────────
-# User profile (resolved from request)
-# ─────────────────────────────────────────────
-
-class UserProfile(BaseModel):
     name: str
     team: str
-    role: str
-    employee_type: str
-    team_hierarchy: list[str] = Field(
-        default_factory=list,
-        description="Full resolved hierarchy, e.g. ['Company', 'Engineering', 'Platform Team']",
-    )
-
-
-# ─────────────────────────────────────────────
-# Memory item returned by Person 2's retriever
-# ─────────────────────────────────────────────
-
-class MemoryItem(BaseModel):
-    id: str
-    content: str
-    source_level: str = Field(description="Which hierarchy level this memory is from")
-    tags: list[str] = Field(default_factory=list)
-    relevance_score: Optional[float] = None
-
-
-# ─────────────────────────────────────────────
-# Exception flags returned by Person 3's tagger
-# ─────────────────────────────────────────────
-
-class ExceptionContext(BaseModel):
-    is_contractor: bool = False
-    is_intern: bool = False
-    needs_vpn_exception: bool = False
-    needs_special_jira_workflow: bool = False
-    custom_flags: dict[str, Any] = Field(default_factory=dict)
-
-
-# ─────────────────────────────────────────────
-# Full context bundle — assembled by context_builder
-# (Person 3 fills this, Person 1 consumes it)
-# ─────────────────────────────────────────────
-
-class AgentContext(BaseModel):
-    user: UserProfile
-    memories: list[MemoryItem] = Field(default_factory=list)
-    exceptions: ExceptionContext = Field(default_factory=ExceptionContext)
+    role: str = ""
+    employee_type: str = "fte"
     query: str
-
-
-# ─────────────────────────────────────────────
-# Outbound response to frontend
-# ─────────────────────────────────────────────
-
-class OnboardingResponse(BaseModel):
-    answer: str
-    used_memories: list[MemoryItem] = Field(default_factory=list)
-    actions_taken: list[str] = Field(default_factory=list)
     session_id: Optional[str] = None
