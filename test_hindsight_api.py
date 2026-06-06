@@ -10,36 +10,40 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BASE_URL = os.getenv("HINDSIGHT_BASE_URL", "https://api.hindsight.vectorize.io").rstrip("/")
+BASE_URL = os.getenv("HINDSIGHT_BASE_URL", "http://localhost:8888").rstrip("/")
 API_KEY = os.getenv("HINDSIGHT_API_KEY", "")
 PROJECT = os.getenv("HINDSIGHT_PROJECT", "ramp-onboarding-demo")
 
 print(f"Testing Hindsight API: {BASE_URL}")
-print(f"API Key: {'*' * (len(API_KEY) - 4)}{API_KEY[-4:] if len(API_KEY) > 4 else '(not set)'}")
-print(f"Project: {PROJECT}")
+print(f"API Key: {'*' * max(0, len(API_KEY) - 4)}{API_KEY[-4:] if len(API_KEY) > 4 else '(not set)'}")
+print(f"Project/Bank ID: {PROJECT}")
 print("-" * 60)
 
 headers = {
-    "Authorization": f"Bearer {API_KEY}",
     "Content-Type": "application/json",
 }
+if API_KEY:
+    headers["Authorization"] = f"Bearer {API_KEY}"
 
-# Test endpoints
+# Test endpoints with correct v1 API structure
 endpoints_to_test = [
     ("GET", "/health", None),
-    ("GET", "/", None),
-    ("GET", "/namespaces", None),
-    ("POST", "/search", {"tags": [], "query": "", "limit": 1}),
-    ("POST", "/records", {
-        "id": "test-record-123",
-        "content": "Test memory content",
-        "tags": ["test"],
-        "namespace": "test",
-        "level": "team",
-        "source": "api-test"
+    ("POST", f"/v1/default/banks/{PROJECT}/memories/recall", {
+        "query": "test search",
+        "top_k": 5
     }),
+    ("POST", f"/v1/default/banks/{PROJECT}/memories/retain", {
+        "content": "Test memory for API verification",
+        "tags": ["test", "api-verification"],
+        "metadata": {
+            "source": "api-test",
+            "namespace": "test"
+        }
+    }),
+    ("GET", f"/v1/default/banks/{PROJECT}/memories/list", None),
 ]
 
+success_count = 0
 for method, path, payload in endpoints_to_test:
     url = BASE_URL + path
     print(f"\n{method} {path}")
@@ -51,13 +55,14 @@ for method, path, payload in endpoints_to_test:
         
         print(f"  Status: {response.status_code}")
         if response.status_code < 400:
+            success_count += 1
             try:
                 data = response.json()
-                print(f"  Response: {data}")
+                print(f"  ✅ Success: {str(data)[:150]}")
             except:
-                print(f"  Response (text): {response.text[:200]}")
+                print(f"  ✅ Success (text): {response.text[:150]}")
         else:
-            print(f"  Error: {response.text[:200]}")
+            print(f"  ❌ Error: {response.text[:200]}")
     except requests.exceptions.ConnectionError as e:
         print(f"  ❌ Connection Error: {e}")
     except requests.exceptions.Timeout:
@@ -66,7 +71,22 @@ for method, path, payload in endpoints_to_test:
         print(f"  ❌ Error: {e}")
 
 print("\n" + "=" * 60)
-print("Summary:")
-print("If you see 404 errors, the Hindsight API may not be available yet.")
-print("The application will automatically fall back to local storage.")
+print(f"Results: {success_count}/{len(endpoints_to_test)} endpoints working")
+print("=" * 60)
+
+if success_count == 0:
+    print("\n⚠️  Hindsight service not reachable!")
+    print("Make sure it's running:")
+    print("  docker run -p 8888:8888 -e HINDSIGHT_API_LLM_API_KEY=<key> \\")
+    print("    -v hindsight-data:/home/hindsight/.pg0 \\")
+    print("    ghcr.io/vectorize-io/hindsight:latest")
+elif success_count < len(endpoints_to_test):
+    print("\n⚠️  Some endpoints failed. Check Hindsight logs.")
+else:
+    print("\n✅ All endpoints working! Hindsight is properly configured.")
+    print("\nYou can now set in your .env:")
+    print(f"  HINDSIGHT_BACKEND=http")
+    print(f"  HINDSIGHT_BASE_URL={BASE_URL}")
+    print(f"  HINDSIGHT_PROJECT={PROJECT}")
+
 print("=" * 60)
