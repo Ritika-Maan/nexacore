@@ -198,28 +198,53 @@ class LocalJsonMemoryStore(BaseMemoryStore):
 
 class HindsightHttpMemoryStore(BaseMemoryStore):
     """
-    Managed Hindsight HTTP adapter with retries and configurable paths.
-
+    Hindsight HTTP adapter for self-hosted Hindsight API.
+    
     Expected environment:
-    - HINDSIGHT_BASE_URL
-    - HINDSIGHT_API_KEY
-    - optional endpoint paths:
-      - HINDSIGHT_SEARCH_PATH
-      - HINDSIGHT_WRITE_PATH
-      - HINDSIGHT_NAMESPACES_PATH
+    - HINDSIGHT_BASE_URL: URL of your Hindsight instance
+    - HINDSIGHT_API_KEY: API key (optional for self-hosted)
+    - HINDSIGHT_PROJECT: Bank ID (defaults to "ramp-onboarding-demo")
+    
+    Actual API endpoints (v1/default/banks/{bank_id}/memories/...):
+    - /recall (search/query memories)
+    - /retain (write/create memories)
+    - /list (list/count memories)
     """
 
     def __init__(self) -> None:
         self.base_url = os.getenv("HINDSIGHT_BASE_URL", "").rstrip("/")
         self.api_key = os.getenv("HINDSIGHT_API_KEY", "").strip()
-        self.search_path = os.getenv("HINDSIGHT_SEARCH_PATH", "/search")
-        self.write_path = os.getenv("HINDSIGHT_WRITE_PATH", "/records")
-        self.namespaces_path = os.getenv("HINDSIGHT_NAMESPACES_PATH", "/namespaces")
+        self.bank_id = os.getenv("HINDSIGHT_PROJECT", "ramp-onboarding-demo")
+        
+        # Use v1 API with banks structure
+        self.search_path = os.getenv(
+            "HINDSIGHT_SEARCH_PATH",
+            f"/v1/default/banks/{self.bank_id}/memories/recall"
+        )
+        self.write_path = os.getenv(
+            "HINDSIGHT_WRITE_PATH",
+            f"/v1/default/banks/{self.bank_id}/memories/retain"
+        )
+        self.list_path = os.getenv(
+            "HINDSIGHT_LIST_PATH",
+            f"/v1/default/banks/{self.bank_id}/memories/list"
+        )
+        self.namespaces_path = os.getenv(
+            "HINDSIGHT_NAMESPACES_PATH",
+            f"/v1/default/banks/{self.bank_id}/memories"
+        )
         self.health_path = os.getenv("HINDSIGHT_HEALTH_PATH", "/health")
-        if not self.base_url or not self.api_key:
+        
+        if not self.base_url:
             raise EnvironmentError(
-                "Hindsight HTTP backend selected but HINDSIGHT_BASE_URL or HINDSIGHT_API_KEY is missing."
+                "Hindsight HTTP backend selected but HINDSIGHT_BASE_URL is missing."
             )
+        
+        logger.info(
+            "Hindsight HTTP client initialized | base_url=%s | bank_id=%s",
+            self.base_url,
+            self.bank_id
+        )
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, min=0.5, max=4))
     def _request(self, method: str, path: str, **kwargs: Any) -> requests.Response:
@@ -280,11 +305,45 @@ class HindsightHttpMemoryStore(BaseMemoryStore):
         self._request("POST", self.namespaces_path, json=payload)
 
     def write_record(self, record: StoredMemoryRecord) -> StoredMemoryRecord:
-        response = self._request("POST", self.write_path, json=record.to_dict())
-        payload = response.json()
-        if isinstance(payload, dict) and payload:
-            return StoredMemoryRecord(**payload.get("record", payload))
-        return record
+        """
+        Write memory using Hindsight's /retain endpoint.
+        
+        Hindsight expects:
+        POST /v1/default/banks/{bank_id}/memories/retain
+        {
+            "content": "...",
+            "tags": [...],
+            "metadata": {...}
+        }
+        """
+        payload = {
+            "content": record.content,
+            "tags": record.tags,
+            "metadata": {
+                "namespace": record.namespace,
+                "level": record.level,
+                "source": record.source,
+                "relevance_score": record.relevance_score,
+            }
+        }
+        
+        try:
+            response = self._request("POST", self.write_path, json=payload)
+            data = response.json()
+            
+            # Hindsight returns the created memory
+            if isinstance(data, dict) and data:
+                # Try to extract the memory from response
+                memory = data.get("memory", data.get("record", data))
+                if "id" in memory:
+                    record.id = memory["id"]
+                if "created_at" in memory:
+                    record.created_at = memory["created_at"]
+            
+            return record
+        except Exception as e:
+            logger.warning("Hindsight write failed: %s", e)
+            return record
 
     def search_records(
         self,
@@ -294,16 +353,61 @@ class HindsightHttpMemoryStore(BaseMemoryStore):
         limit: int = 10,
         namespace: str | None = None,
     ) -> list[StoredMemoryRecord]:
-        payload = {
-            "tags": normalize_tags(tags),
-            "query": query,
-            "limit": limit,
-            "namespace": namespace,
+        """
+        Search memories using Hindsight's /recall endpoint.
+        
+        Hindsight expects:
+        POST /v1/default/banks/{bank_id}/memories/recall
+        {
+            "query": "search text",
+            "top_k": 10,
+            "filters": {...}
         }
-        response = self._request("POST", self.search_path, json=payload)
-        data = response.json()
-        records = data.get("records", data if isinstance(data, list) else [])
-        return [StoredMemoryRecord(**record) for record in records]
+        """
+        payload = {
+            "query": query or "",
+            "top_k": limit,
+        }
+        
+        # Add filters if we have tags or namespace
+        if tags or namespace:
+            filters = {}
+            if namespace:
+                filters["namespace"] = namespace
+            if tags:
+                filters["tags"] = normalize_tags(tags)
+            payload["filters"] = filters
+        
+        try:
+            response = self._request("POST", self.search_path, json=payload)
+            data = response.json()
+            
+            # Hindsight returns {"memories": [...]} or similar
+            records = data.get("memories", data.get("records", data if isinstance(data, list) else []))
+            
+            # Convert to our StoredMemoryRecord format
+            result = []
+            for record in records:
+                # Try to match our schema, with fallbacks
+                try:
+                    result.append(StoredMemoryRecord(**record))
+                except Exception:
+                    # Create a basic record if format doesn't match
+                    result.append(StoredMemoryRecord(
+                        id=record.get("id", str(uuid4())),
+                        content=record.get("content", record.get("text", "")),
+                        tags=normalize_tags(record.get("tags", [])),
+                        namespace=record.get("namespace", namespace or "default"),
+                        level=record.get("level", "company"),
+                        source=record.get("source", "hindsight"),
+                        relevance_score=record.get("score", record.get("relevance_score", 0.0)),
+                        created_at=record.get("created_at", utc_now_iso()),
+                        updated_at=record.get("updated_at", utc_now_iso()),
+                    ))
+            return result
+        except Exception as e:
+            logger.warning("Hindsight search failed: %s", e)
+            return []
 
     def reset(self) -> None:
         reset_path = os.getenv("HINDSIGHT_RESET_PATH", "/records/reset")
@@ -315,42 +419,40 @@ class HindsightHttpMemoryStore(BaseMemoryStore):
             raise
 
     def count_records(self) -> int:
-        """Count total records by doing an empty search with limit=1."""
+        """
+        Count total records using Hindsight's /list endpoint.
+        
+        Hindsight API:
+        GET /v1/default/banks/{bank_id}/memories/list
+        """
         try:
-            # Try POST with empty search (most APIs support this)
-            response = self._request("POST", self.search_path, json={
-                "tags": [],
-                "query": "",
-                "limit": 1,
-                "namespace": None
-            })
+            response = self._request("GET", self.list_path, timeout=5)
             data = response.json()
-            # Check if response includes total count
+            
+            # Check various possible count fields
             if "total" in data:
                 return int(data["total"])
             if "count" in data:
                 return int(data["count"])
-            # If no count field, return length of records
-            records = data.get("records", data if isinstance(data, list) else [])
-            return len(records) if records else 0
-        except requests.HTTPError as exc:
-            # If POST fails, try GET as fallback
-            if exc.response is not None and exc.response.status_code == 405:
-                try:
-                    response = self._request("GET", self.search_path)
-                    data = response.json()
-                    return int(data.get("count", 0))
-                except Exception:
-                    logger.warning("Unable to count records from Hindsight API, assuming 0")
-                    return 0
-            logger.warning("Unable to count records from Hindsight API: %s", exc)
+            
+            # If response contains memories array, count them
+            memories = data.get("memories", data.get("records", []))
+            if isinstance(memories, list):
+                return len(memories)
+                
+            return 0
+        except Exception as e:
+            logger.warning("Unable to count records from Hindsight API: %s", e)
             return 0
 
     def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.api_key}",
+        headers = {
             "Content-Type": "application/json",
         }
+        # API key is optional for self-hosted Hindsight
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
 
 class HindsightClient:
@@ -358,45 +460,82 @@ class HindsightClient:
         self.project = os.getenv("HINDSIGHT_PROJECT", "ramp-onboarding-demo")
         self.backend_kind = hindsight_backend()
         
-        # Force local backend if explicitly set, even if HTTP config present
+        # Force local backend if explicitly set
         if self.backend_kind == "local":
             logger.info("Using local Hindsight backend (file-based storage)")
             self._store = LocalJsonMemoryStore(store_path=store_path)
         elif self.backend_kind == "http":
             base_url = os.getenv("HINDSIGHT_BASE_URL", "").rstrip("/")
             api_key = os.getenv("HINDSIGHT_API_KEY", "").strip()
-            if base_url and api_key:
-                logger.info("Using HTTP Hindsight backend: %s", base_url)
-                try:
-                    self._store: BaseMemoryStore = HindsightHttpMemoryStore()
-                    # Test connectivity
-                    health = self._store.healthcheck()
-                    if health.get("status") != "ok":
-                        logger.warning(
-                            "Hindsight HTTP backend health check failed: %s - falling back to local",
-                            health
-                        )
-                        self.backend_kind = "local"
-                        self._store = LocalJsonMemoryStore(store_path=store_path)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to initialize Hindsight HTTP backend: %s - falling back to local",
-                        e
-                    )
-                    self.backend_kind = "local"
-                    self._store = LocalJsonMemoryStore(store_path=store_path)
-            else:
+            
+            if not base_url or not api_key:
                 logger.warning(
                     "HINDSIGHT_BACKEND=http but HINDSIGHT_BASE_URL or HINDSIGHT_API_KEY "
                     "is missing; falling back to local store"
                 )
                 self.backend_kind = "local"
                 self._store = LocalJsonMemoryStore(store_path=store_path)
+            else:
+                # Try to use official SDK if this looks like the cloud API
+                if "api.hindsight.vectorize.io" in base_url:
+                    try:
+                        from backend.memory.hindsight_sdk_adapter import HindsightSDKStore
+                        logger.info("Using official Hindsight SDK for cloud API")
+                        self._store: BaseMemoryStore = HindsightSDKStore()
+                        
+                        # Test connectivity
+                        health = self._store.healthcheck()
+                        if health.get("status") != "ok":
+                            logger.warning(
+                                "Hindsight SDK health check failed: %s - falling back to local",
+                                health
+                            )
+                            self.backend_kind = "local"
+                            self._store = LocalJsonMemoryStore(store_path=store_path)
+                    except ImportError:
+                        logger.warning(
+                            "hindsight-client package not installed, using HTTP adapter. "
+                            "Install with: pip install hindsight-client"
+                        )
+                        self._store = self._create_http_store(base_url, api_key)
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to initialize Hindsight SDK: %s - falling back to local",
+                            e
+                        )
+                        self.backend_kind = "local"
+                        self._store = LocalJsonMemoryStore(store_path=store_path)
+                else:
+                    # Use HTTP adapter for self-hosted instances
+                    logger.info("Using HTTP adapter for self-hosted Hindsight")
+                    self._store = self._create_http_store(base_url, api_key)
         else:
             logger.warning("Unknown HINDSIGHT_BACKEND=%s, using local", self.backend_kind)
             self.backend_kind = "local"
             self._store = LocalJsonMemoryStore(store_path=store_path)
+        
         self._db = AppDatabase.get()
+    
+    def _create_http_store(self, base_url: str, api_key: str) -> BaseMemoryStore:
+        """Create HTTP store with health check and fallback."""
+        try:
+            store = HindsightHttpMemoryStore()
+            health = store.healthcheck()
+            if health.get("status") != "ok":
+                logger.warning(
+                    "Hindsight HTTP backend health check failed: %s - falling back to local",
+                    health
+                )
+                self.backend_kind = "local"
+                return LocalJsonMemoryStore()
+            return store
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize Hindsight HTTP backend: %s - falling back to local",
+                e
+            )
+            self.backend_kind = "local"
+            return LocalJsonMemoryStore()
 
     def list_namespaces(self) -> dict[str, dict[str, Any]]:
         return self._store.list_namespaces()
