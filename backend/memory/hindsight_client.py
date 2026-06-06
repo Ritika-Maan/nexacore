@@ -461,45 +461,82 @@ class HindsightClient:
         self.project = os.getenv("HINDSIGHT_PROJECT", "ramp-onboarding-demo")
         self.backend_kind = hindsight_backend()
         
-        # Force local backend if explicitly set, even if HTTP config present
+        # Force local backend if explicitly set
         if self.backend_kind == "local":
             logger.info("Using local Hindsight backend (file-based storage)")
             self._store = LocalJsonMemoryStore(store_path=store_path)
         elif self.backend_kind == "http":
             base_url = os.getenv("HINDSIGHT_BASE_URL", "").rstrip("/")
             api_key = os.getenv("HINDSIGHT_API_KEY", "").strip()
-            if base_url and api_key:
-                logger.info("Using HTTP Hindsight backend: %s", base_url)
-                try:
-                    self._store: BaseMemoryStore = HindsightHttpMemoryStore()
-                    # Test connectivity
-                    health = self._store.healthcheck()
-                    if health.get("status") != "ok":
-                        logger.warning(
-                            "Hindsight HTTP backend health check failed: %s - falling back to local",
-                            health
-                        )
-                        self.backend_kind = "local"
-                        self._store = LocalJsonMemoryStore(store_path=store_path)
-                except Exception as e:
-                    logger.warning(
-                        "Failed to initialize Hindsight HTTP backend: %s - falling back to local",
-                        e
-                    )
-                    self.backend_kind = "local"
-                    self._store = LocalJsonMemoryStore(store_path=store_path)
-            else:
+            
+            if not base_url or not api_key:
                 logger.warning(
                     "HINDSIGHT_BACKEND=http but HINDSIGHT_BASE_URL or HINDSIGHT_API_KEY "
                     "is missing; falling back to local store"
                 )
                 self.backend_kind = "local"
                 self._store = LocalJsonMemoryStore(store_path=store_path)
+            else:
+                # Try to use official SDK if this looks like the cloud API
+                if "api.hindsight.vectorize.io" in base_url:
+                    try:
+                        from backend.memory.hindsight_sdk_adapter import HindsightSDKStore
+                        logger.info("Using official Hindsight SDK for cloud API")
+                        self._store: BaseMemoryStore = HindsightSDKStore()
+                        
+                        # Test connectivity
+                        health = self._store.healthcheck()
+                        if health.get("status") != "ok":
+                            logger.warning(
+                                "Hindsight SDK health check failed: %s - falling back to local",
+                                health
+                            )
+                            self.backend_kind = "local"
+                            self._store = LocalJsonMemoryStore(store_path=store_path)
+                    except ImportError:
+                        logger.warning(
+                            "hindsight-client package not installed, using HTTP adapter. "
+                            "Install with: pip install hindsight-client"
+                        )
+                        self._store = self._create_http_store(base_url, api_key)
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to initialize Hindsight SDK: %s - falling back to local",
+                            e
+                        )
+                        self.backend_kind = "local"
+                        self._store = LocalJsonMemoryStore(store_path=store_path)
+                else:
+                    # Use HTTP adapter for self-hosted instances
+                    logger.info("Using HTTP adapter for self-hosted Hindsight")
+                    self._store = self._create_http_store(base_url, api_key)
         else:
             logger.warning("Unknown HINDSIGHT_BACKEND=%s, using local", self.backend_kind)
             self.backend_kind = "local"
             self._store = LocalJsonMemoryStore(store_path=store_path)
+        
         self._db = AppDatabase.get()
+    
+    def _create_http_store(self, base_url: str, api_key: str) -> BaseMemoryStore:
+        """Create HTTP store with health check and fallback."""
+        try:
+            store = HindsightHttpMemoryStore()
+            health = store.healthcheck()
+            if health.get("status") != "ok":
+                logger.warning(
+                    "Hindsight HTTP backend health check failed: %s - falling back to local",
+                    health
+                )
+                self.backend_kind = "local"
+                return LocalJsonMemoryStore()
+            return store
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize Hindsight HTTP backend: %s - falling back to local",
+                e
+            )
+            self.backend_kind = "local"
+            return LocalJsonMemoryStore()
 
     def list_namespaces(self) -> dict[str, dict[str, Any]]:
         return self._store.list_namespaces()
