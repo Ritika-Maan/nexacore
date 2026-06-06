@@ -315,10 +315,16 @@ class HindsightClient:
     def __init__(self, store_path: str | Path | None = None) -> None:
         self.project = os.getenv("HINDSIGHT_PROJECT", "ramp-onboarding-demo")
         self.backend_kind = hindsight_backend()
-        if self.backend_kind == "http":
+        
+        # Force local backend if explicitly set, even if HTTP config present
+        if self.backend_kind == "local":
+            logger.info("Using local Hindsight backend (file-based storage)")
+            self._store = LocalJsonMemoryStore(store_path=store_path)
+        elif self.backend_kind == "http":
             base_url = os.getenv("HINDSIGHT_BASE_URL", "").rstrip("/")
             api_key = os.getenv("HINDSIGHT_API_KEY", "").strip()
             if base_url and api_key:
+                logger.info("Using HTTP Hindsight backend: %s", base_url)
                 self._store: BaseMemoryStore = HindsightHttpMemoryStore()
             else:
                 logger.warning(
@@ -328,6 +334,7 @@ class HindsightClient:
                 self.backend_kind = "local"
                 self._store = LocalJsonMemoryStore(store_path=store_path)
         else:
+            logger.warning("Unknown HINDSIGHT_BACKEND=%s, using local", self.backend_kind)
             self.backend_kind = "local"
             self._store = LocalJsonMemoryStore(store_path=store_path)
         self._db = AppDatabase.get()

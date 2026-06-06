@@ -30,13 +30,24 @@ FRONTEND_URL=https://nexacore-frontend.onrender.com
 # Auth (currently disabled, can enable later)
 AUTH_REQUIRED=false
 
+# Memory Backend - Use local for production (file-based)
+HINDSIGHT_BACKEND=local
+HINDSIGHT_PROJECT=ramp-onboarding-demo
+# NOTE: Do NOT set HINDSIGHT_BASE_URL or HINDSIGHT_API_KEY for local mode
+
 # Integrations
 INTEGRATIONS_MODE=demo
-HINDSIGHT_BACKEND=local
+TICKET_BACKEND=jira
 
 # Cache (if using Redis, otherwise leave empty)
 # REDIS_URL=<your-redis-url>
 ```
+
+**IMPORTANT:** For production with local storage:
+- Set `HINDSIGHT_BACKEND=local`
+- Do NOT set `HINDSIGHT_BASE_URL` or `HINDSIGHT_API_KEY`
+- The data will be stored in `/app/data/hindsight_store.json` inside the container
+- This data will persist across deployments if you configure a persistent disk (see Render docs)
 
 **Service Settings:**
 - **Region:** Same as frontend (for lower latency)
@@ -123,6 +134,22 @@ curl https://nexacore-frontend.onrender.com/api/health
 **Fix:** Either:
 - Set `AUTH_REQUIRED=false` on backend (for demo/dev)
 - OR set `APP_API_KEY` and send it from frontend
+
+### Issue 5: HTTP 404 errors for Hindsight API during startup
+**Error:** `HTTPError: 404 Client Error: Not Found for url: https://api.hindsight.vectorize.io/search`
+
+**Cause:** Backend is trying to use HTTP Hindsight mode but the API doesn't exist or credentials are wrong
+
+**Fix:** On Render backend service, set:
+```env
+HINDSIGHT_BACKEND=local
+```
+
+And **REMOVE** these variables (or leave them unset):
+- `HINDSIGHT_BASE_URL`
+- `HINDSIGHT_API_KEY`
+
+The local mode uses file-based storage which is perfect for demo/production until you have a real Hindsight cloud service.
 
 ## Architecture Diagram
 
