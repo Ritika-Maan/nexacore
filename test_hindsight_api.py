@@ -59,8 +59,12 @@ try:
         query="What is NexaCore?"
     )
     print(f"   ✅ Found {len(results)} memories")
-    for i, memory in enumerate(results[:3], 1):
-        print(f"   {i}. {memory.content[:80]}...")
+    for i, result in enumerate(results[:3], 1):
+        # RecallResult has memory with text attribute
+        memory = result.memory if hasattr(result, 'memory') else result
+        text = memory.text if hasattr(memory, 'text') else (memory.content if hasattr(memory, 'content') else str(memory))
+        score = result.score if hasattr(result, 'score') else 0.0
+        print(f"   {i}. [{score:.3f}] {text[:70]}...")
 except Exception as e:
     print(f"   ❌ Failed: {e}")
 

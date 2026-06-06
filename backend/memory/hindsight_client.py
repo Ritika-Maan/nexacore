@@ -453,7 +453,6 @@ class HindsightHttpMemoryStore(BaseMemoryStore):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
-        }
 
 
 class HindsightClient:

@@ -61,8 +61,8 @@ class HindsightSDKStore:
     def healthcheck(self) -> dict[str, Any]:
         """Check if Hindsight API is accessible."""
         try:
-            # Try a simple recall to test connectivity
-            self.client.recall(bank_id=self.bank_id, query="test", top_k=1)
+            # Try a simple recall to test connectivity (SDK doesn't support top_k yet)
+            results = self.client.recall(bank_id=self.bank_id, query="test")
             return {"status": "ok", "backend": "hindsight-sdk"}
         except Exception as e:
             logger.warning("Hindsight SDK healthcheck failed: %s", e)
@@ -73,30 +73,24 @@ class HindsightSDKStore:
         Write a memory using Hindsight SDK's retain() method.
         
         Maps StoredMemoryRecord to Hindsight's Memory format.
+        Note: SDK's retain() only accepts content parameter, not metadata.
         """
         try:
-            # Use the SDK's retain method
+            # Use the SDK's retain method (only content parameter supported)
             memory = self.client.retain(
                 bank_id=self.bank_id,
-                content=record.content,
-                metadata={
-                    "tags": record.tags,
-                    "namespace": record.namespace,
-                    "level": record.level,
-                    "source": record.source,
-                    "relevance_score": record.relevance_score,
-                }
+                content=record.content
             )
             
             # Update record with returned ID if available
             if hasattr(memory, 'id') and memory.id:
-                record.id = memory.id
+                record.id = str(memory.id)
             
-            logger.info("Memory written via SDK | content_length=%d", len(record.content))
+            logger.info("Memory written via SDK | content_length=%d | id=%s", len(record.content), record.id)
             return record
             
         except Exception as e:
-            logger.warning("Failed to write memory via SDK: %s", e)
+            logger.exception("Failed to write memory via SDK: %s", e)
             return record
     
     def search_records(
@@ -113,21 +107,27 @@ class HindsightSDKStore:
         Converts Hindsight's RecallResult objects back to StoredMemoryRecord.
         """
         try:
-            # Use the SDK's recall method
-            results = client.recall(
+            # Use the SDK's recall method (note: SDK doesn't support top_k parameter)
+            results = self.client.recall(
                 bank_id=self.bank_id,
                 query=query or "general information"  # SDK requires meaningful query
             )
             
             # Convert RecallResult objects to StoredMemoryRecord
             records = []
-            for result in results[:limit]:  # Limit results
+            for result in results[:limit]:  # Limit results client-side
                 # RecallResult has: memory (Memory object) and score
                 memory = result.memory if hasattr(result, 'memory') else result
                 score = result.score if hasattr(result, 'score') else 0.0
                 
-                # Extract content
-                content = memory.content if hasattr(memory, 'content') else str(memory)
+                # Extract content - SDK uses 'text' not 'content'
+                content = ""
+                if hasattr(memory, 'text'):
+                    content = memory.text
+                elif hasattr(memory, 'content'):
+                    content = memory.content
+                else:
+                    content = str(memory)
                 
                 # Get metadata if available
                 metadata = memory.metadata if hasattr(memory, 'metadata') and memory.metadata else {}
@@ -164,7 +164,7 @@ class HindsightSDKStore:
             return records
             
         except Exception as e:
-            logger.warning("Failed to search memories via SDK: %s", e)
+            logger.exception("Failed to search memories via SDK: %s", e)
             return []
     
     def count_records(self) -> int:
@@ -175,10 +175,10 @@ class HindsightSDKStore:
         so we do a broad search and count results.
         """
         try:
+            # SDK doesn't support top_k parameter yet
             results = self.client.recall(
                 bank_id=self.bank_id,
-                query="*",
-                top_k=1000  # Max we can get in one call
+                query="*"
             )
             return len(results)
         except Exception as e:
