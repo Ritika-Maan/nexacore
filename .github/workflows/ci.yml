@@ -96,12 +96,14 @@ jobs:
         working-directory: frontend
         run: npm ci
       - name: Install Playwright browsers
+        working-directory: frontend
         run: npx playwright install --with-deps chromium
       - name: Run Playwright e2e tests
+        working-directory: frontend
         env:
           CI: "true"
           GROQ_API_KEY: test-key
-        run: npx playwright test
+        run: npm run test:e2e
 
   load-test:
     runs-on: ubuntu-latest

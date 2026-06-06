@@ -9,7 +9,8 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "python -m backend.main",
+      command: "python3 -m backend.main",
+      cwd: "..",
       url: "http://localhost:8000/health",
       reuseExistingServer: !process.env.CI,
       timeout: 120000,
@@ -21,7 +22,6 @@ export default defineConfig({
     },
     {
       command: "npm run dev -- --host 127.0.0.1 --port 5173",
-      cwd: "frontend",
       url: "http://127.0.0.1:5173",
       reuseExistingServer: !process.env.CI,
       timeout: 120000,
