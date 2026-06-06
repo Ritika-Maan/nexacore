@@ -19,11 +19,4 @@ RUN mkdir -p /app/data
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "gunicorn backend.server:app \
-     -c backend/gunicorn.conf.py \
-     -w 2 \
-     -k uvicorn.workers.UvicornWorker \
-     --bind 0.0.0.0:${PORT:-8000} \
-     --timeout 120 \
-     --access-logfile - \
-     --error-logfile -"]
+CMD ["python", "-m", "uvicorn", "backend.server:app", "--host", "0.0.0.0", "--port", "8000"]
