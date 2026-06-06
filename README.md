@@ -1,21 +1,22 @@
-# Ramp Onboarding Agent
+# NexaCore - AI-Powered Onboarding Assistant
 
 Cloud-ready onboarding assistant with:
-- Groq-backed conversational agent
-- hierarchical team context resolution
-- memory retrieval and writeback
-- demo memory flywheel (`person #1` vs `person #10`)
-- operational actions for tickets, reminders, and blocker logging
+- 🤖 Groq-backed conversational agent
+- 🧠 **Hindsight Cloud Memory** - AI-powered knowledge base
+- 🎯 Hierarchical team context resolution
+- 📝 Memory retrieval and writeback
+- 🎭 Demo memory flywheel (`person #1` vs `person #10`)
+- 🎫 Operational actions for tickets, reminders, and blocker logging
 
-## Local Run
+## ⚡ Quick Start
 
-Backend:
+### Backend
 
 ```bash
 python3 -m backend.main
 ```
 
-Frontend:
+### Frontend
 
 ```bash
 cd frontend
@@ -23,9 +24,41 @@ npm ci
 npm run dev
 ```
 
-Copy `.env.example` to `.env` and fill in at least `GROQ_API_KEY`.
+### Configuration
 
-## Production Run
+Copy `.env.example` to `.env` and set:
+
+**Required:**
+- `GROQ_API_KEY` - Your Groq API key
+- `HINDSIGHT_API_KEY` - Your Hindsight Cloud API key
+- `HINDSIGHT_BASE_URL` - `https://api.hindsight.vectorize.io`
+
+**Optional:**
+- `DATABASE_URL` - PostgreSQL connection (uses SQLite if not set)
+- `AUTH_REQUIRED` - Enable API authentication (`false` by default)
+
+## 🧠 Hindsight Cloud Memory
+
+NexaCore uses **Hindsight Cloud** for intelligent memory and context management:
+
+- ☁️ **Cloud-native** - No self-hosting required
+- 🔍 **Semantic search** - Find relevant context automatically  
+- 🤖 **LLM integration** - Generate AI-powered answers
+- 📚 **Mental models** - Living documents that stay current
+- ⚡ **Auto-fallback** - Falls back to local storage if unavailable
+
+### Setup
+
+```env
+HINDSIGHT_BACKEND=http
+HINDSIGHT_BASE_URL=https://api.hindsight.vectorize.io
+HINDSIGHT_API_KEY=hsk_...
+HINDSIGHT_PROJECT=default
+```
+
+See `HINDSIGHT_READY.md` for complete setup guide.
+
+## 🐳 Production Run
 
 ```bash
 docker compose -f docker-compose.prod.yml up --build
@@ -35,19 +68,33 @@ Services:
 - frontend: `http://localhost:3000`
 - backend: `http://localhost:8000`
 
-## Environment
+## 📝 Environment Variables
 
-Important variables:
-- `GROQ_API_KEY`: required
-- `GROQ_MODEL`: defaults to `openai/gpt-oss-20b`
-- `DATA_DIR`: writable application storage for cloud volumes
-- `APP_DB_PATH`: SQLite operational database path
-- `AUTH_REQUIRED`: enable API-key auth for protected endpoints
-- `APP_API_KEY`: shared secret for server-to-server or protected environments
-- `HINDSIGHT_STORE_PATH`: memory persistence file path
-- `REMINDER_STORE_PATH`: reminder persistence file path
-- `TICKET_STORE_PATH`: ticket persistence file path
-- `HINDSIGHT_BACKEND`: `local` or `http`
+### Core Settings
+- `GROQ_API_KEY` - Groq LLM API key (required)
+- `GROQ_MODEL` - Model name (default: `openai/gpt-oss-20b`)
+- `APP_ENV` - Environment (`development` or `production`)
+- `PORT` - Backend port (default: `8000`)
+
+### Hindsight Memory
+- `HINDSIGHT_BACKEND` - Memory backend (`local` or `http`)
+- `HINDSIGHT_BASE_URL` - Cloud API URL (for `http` mode)
+- `HINDSIGHT_API_KEY` - Cloud API authentication key
+- `HINDSIGHT_PROJECT` - Bank/project ID (default: `default`)
+
+### Database
+- `DATABASE_URL` - PostgreSQL connection string (optional, uses SQLite if not set)
+- `DATA_DIR` - Data storage directory (default: `./data`)
+
+### Authentication
+- `AUTH_REQUIRED` - Enable API key auth (default: `false`)
+- `APP_API_KEY` - Shared secret for protected endpoints
+- `RBAC_ENFORCE` - Enable role-based access control
+
+### Integrations
+- `INTEGRATIONS_MODE` - `demo` (mock) or `live` (real APIs)
+- `JIRA_BASE_URL`, `JIRA_API_TOKEN` - Jira integration
+- `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` - Email integration
 - `HINDSIGHT_BASE_URL`: required for the HTTP-backed Hindsight adapter
 
 ## Cloud Deployment Notes
